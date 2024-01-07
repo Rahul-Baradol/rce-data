@@ -2,6 +2,7 @@ import express from "express";
 import { graphqlHTTP } from "express-graphql";
 import { GraphQLObjectType, GraphQLSchema, GraphQLNonNull, GraphQLList, GraphQLString, GraphQLInt } from "graphql";
 
+import submissionsModel from './models/submissions.js';
 import problemsModel from './models/problems.js';
 import cors from "cors"
 import mongoose from 'mongoose';
@@ -13,6 +14,9 @@ dotenv.config({
 })
 
 let app = express();
+
+const submissionPageSize = 10;
+const problemPageSize = 5;
 
 const PORT = process.env.PORT || 3003;
 
@@ -29,7 +33,6 @@ const problemType = new GraphQLObjectType({
    name: "Problem",
    description: "Problem",
    fields: () => ({
-      id: { type: new GraphQLNonNull(GraphQLString) },
       title: { type: new GraphQLNonNull(GraphQLString) },
       description: { type: new GraphQLNonNull(GraphQLString) },
       difficulty: { type: new GraphQLNonNull(GraphQLString) },
@@ -46,6 +49,19 @@ const problemType = new GraphQLObjectType({
    })
 })
 
+const submissionType = new GraphQLObjectType({
+   name: "Submission",
+   description: "A submission",
+   fields: () => ({
+      submissionId: { type: GraphQLInt },
+      user: { type: GraphQLString },
+      problemTitle: { type: GraphQLString },
+      code: { type: GraphQLString },
+      status: { type: GraphQLString },
+      time: { type: GraphQLString }
+   })
+})
+
 const RootQuery = new GraphQLObjectType({
    name: "Query",
    description: "This is Root Query",
@@ -54,17 +70,17 @@ const RootQuery = new GraphQLObjectType({
          type: problemType,
          description: "problem",
          args: {
-            id: { type: GraphQLString }
+            title: { type: GraphQLString }
          },
          resolve: async (parent, args) => {
             try {
                const data = await problemsModel.findOne({
-                  id: `${args.id}`
+                  title: `${args.title}`
                });
 
                return data;
             } catch (error) {
-               console.log("Unable to connect to the database in Problem service");
+               console.log("Unable to connect to the database in Data service");
                console.log(error);
                return {};
             }
@@ -73,16 +89,26 @@ const RootQuery = new GraphQLObjectType({
 
       problems: {
          type: new GraphQLList(problemType),
-         description: "List of all the problems",
+         description: "List of all the problems in a page",
          args: {
             page: { type: GraphQLInt }
          },
          resolve: async (parent, args) => {
             try {
-               const data = await problemsModel.find({}).skip(5 * (args.page - 1)).limit(5);
+               // const data = await problemsModel.find({}).skip(problemPageSize * (args.page - 1)).limit(problemPageSize);
+
+               const data = await problemsModel.aggregate([
+                  {
+                     $skip: problemPageSize * (args.page - 1)
+                  },
+
+                  {
+                     $limit: problemPageSize
+                  }
+               ])
                return data;
             } catch (error) {
-               console.log("Unable to connect to the database in Problem service");
+               console.log("Unable to connect to the database in Data service");
                console.log(error);
                return {};
             }
@@ -97,9 +123,90 @@ const RootQuery = new GraphQLObjectType({
                const count = await problemsModel.find({}).countDocuments();
                return count;
             } catch (error) {
-               console.log("Unable to connect to the database in Problem service");
+               console.log("Unable to connect to the database in Data service");
                console.log(error);
                return -1;
+            }
+         }
+      },
+
+      submissions: {
+         type: GraphQLList(submissionType),
+         description: "List of submissions in a page",
+         args: {
+            page: { type: GraphQLInt },
+            user: { type: GraphQLString },
+            problemTitle: { type: GraphQLString }
+         },
+         resolve: async (parent, args) => {
+            try {
+               const data = await submissionsModel.aggregate([
+                  {
+                     $match: {
+                        user: args.user,
+                        problemTitle: args.problemTitle
+                     }
+                  },
+
+                  {
+                     $sort: {
+                        submissionId: -1
+                     }
+                  },
+
+                  {
+                     $skip: submissionPageSize * (args.page - 1),
+                  },
+
+                  {
+                     $limit: submissionPageSize
+                  }
+               ]);
+
+               return data;
+            } catch (error) {
+               console.log("Unable to connect to the database in Data service");
+               console.log(error);
+               return {};
+            }
+         }
+      },
+
+      submission: {
+         type: submissionType,
+         description: "submission",
+         args: {
+            submissionId: { type: GraphQLInt }
+         },
+         resolve: async (parent, args) => {
+            try {
+               const data = await submissionsModel.findOne({
+                  submissionId: `${args.submissionId}`
+               });
+
+               return data;
+            } catch (error) {
+               console.log("Unable to connect to the database in Data service");
+               console.log(error);
+               return {};
+            }
+         }
+      },
+
+      submissionCount: {
+         type: GraphQLInt,
+         description: "Count of all the submissions of a user",
+         args: {
+            user: { type: GraphQLString }
+         },
+         resolve: async (parent, args) => {
+            try {
+               const count = await submissionsModel.findOne({ user: args.user }).countDocuments();
+               return count;
+            } catch (error) {
+               console.log("Unable to connect to the database in Data service");
+               console.log(error);
+               return {};
             }
          }
       }
@@ -122,7 +229,7 @@ app.listen(PORT, async () => {
       await mongoose.connect(process.env.MONGODB_URI);
       console.log(`rce-data service running on port ${PORT}`)
    } catch (error) {
-      console.log("Unable to connect to the database during service bootup.");
+      console.log("Unable to connect to the database during Data service bootup.");
       console.log(error);
    }
 }) 
